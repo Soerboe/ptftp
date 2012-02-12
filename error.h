@@ -9,7 +9,6 @@
 #define ERRNO_IP            -6
 
 void error (const char *);
-void error_l (const char *);
 void error_num (int);
 
 #endif

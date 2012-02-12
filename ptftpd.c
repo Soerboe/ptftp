@@ -1,8 +1,10 @@
+#include <assert.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <pthread.h>
 #include <signal.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
@@ -14,23 +16,60 @@
 
 #define BACKLOG 5 // max number of pending connections
 
+int sockfd;
+char terminate = 0;
+
+struct client_info {
+    pthread_t thread;
+    int sock;
+    int id;
+    struct sockaddr_in addr;
+    struct client_info *next;
+};
+
+struct client_info *clients;
+int num_clients = 0, clients_id = 0;
+
+pthread_mutex_t clients_mutex;
+
+/* Function definitions */
+int init();
 int net_init();
-void net_destroy();
-int handle(int);
+void destroy();
+void handle();
+void *handle_client(void *);
+
 
 int main (int argc, char **argv)
 {
-    signal(SIGINT, net_destroy);
+    signal(SIGINT, destroy);
+    
+    if (init() < 0)
+        return EXIT_FAILURE;
 
-    int sockfd = net_init();
-    handle(sockfd);
+
+
+    handle();
 
     return EXIT_SUCCESS;
 }
 
+int init() {
+    int ret;
+    
+    if ((ret = net_init()) < 0)
+        return ret;
+
+    pthread_mutex_init(&clients_mutex, NULL);
+    clients = NULL;
+
+    return 0;
+}
+
+/* Initialize socket */
 int net_init()
 {
-    int sockfd, true = 1;
+    int true = 1;
     struct sockaddr_in server_addr;
 
     /* NOTE: the new way of doing it didn't work with DCCP */
@@ -44,7 +83,7 @@ int net_init()
 //     hints.ai_protocol = IPPROTO_DCCP;
 // 
 //     if ((res = getaddrinfo("localhost", "tftp", &hints, &serverinfo)) != 0) {
-//         error_l(gai_strerror(res));
+//         error(gai_strerror(res));
 //         return ERRNO_GETADDR;
 //     }
 // 
@@ -101,32 +140,159 @@ int net_init()
     return sockfd;
 }
 
-void net_destroy()
+void destroy()
 {
-
+    pthread_mutex_destroy(&clients_mutex);
+    close(sockfd);
     exit(EXIT_SUCCESS);
 }
 
-int handle(int sockfd)
+void handle()
 {
     int infd;
     struct sockaddr_in client_addr;
     unsigned int client_addr_len = sizeof(client_addr);
 
     while (TRUE) {
-        char buf[1024];
-
         if ((infd = accept(sockfd, (struct sockaddr *) &client_addr, &client_addr_len)) == -1) {
             error(strerror(errno));
             continue;
         }
 
-        int bytes = recv(infd, buf, 1024, 0);
+        pthread_mutex_lock(&clients_mutex);
+        if (num_clients >= MAX_CLIENTS) {
+            pthread_mutex_unlock(&clients_mutex);
+            continue;
+        }
 
-        printf("%s %d\n", buf, bytes);
+        int id = clients_id;
+        clients_id = (clients_id+1) % MAX_CLIENTS;
+        pthread_mutex_unlock(&clients_mutex);
 
-        printf("%d\n", ntohs(client_addr.sin_port));
+        struct client_info *ci = calloc(1, sizeof(struct client_info));
+        ci->id = id;
+        ci->sock = infd;
+        memcpy(&(ci->addr), &client_addr, sizeof(client_addr));
+        if (pthread_create(&(ci->thread), NULL, handle_client, (void *) id)) {
+            error(strerror(errno));
+            close(infd);
+            continue;
+        }
+
+        pthread_mutex_lock(&clients_mutex);
+        num_clients++;
+        ci->next = clients;
+        clients = ci;
+        pthread_mutex_unlock(&clients_mutex);
+
+        pthread_detach(ci->thread);
+    }
+}
+
+void *handle_client(void *_id)
+{
+    int BUF_SIZE = 1024;
+
+    int id = (int) _id, i;
+    struct client_info *ci;
+    char buf[BUF_SIZE]; // extend if larger data field added
+    char filename[512];
+    char mode[16];
+
+    /* Get client info */
+    pthread_mutex_lock(&clients_mutex);
+
+    for (ci = clients; ci != NULL; ci = ci->next) {
+        if (id == ci->id) break;
     }
 
-    return 9999;
+    pthread_mutex_unlock(&clients_mutex);
+    assert(ci != NULL);
+
+    printf("Thread %d\n", id);
+
+    while (TRUE) {
+        int bytes; 
+        static int de = 1;
+
+        if ((bytes = recv(ci->sock, buf, BUF_SIZE, 0)) <= 0) {
+            if (bytes == 0) {
+                //TODO client shut down
+                error_num(4);
+                break;
+            } else  {
+                //TODO error
+            }
+        }
+
+        printf("PKT %d\n", de++);
+
+        uint16_t opcode = (uint16_t) *buf;
+
+        /* Handle incoming packet */
+        if (opcode == PKT_RRQ) {
+            char done_filename = FALSE;
+            char done_mode = FALSE;
+            int fileidx = 0, modeidx = 0;
+
+            /* Extract filename and mode */
+            for (i = sizeof(uint16_t); i < bytes; i++) {
+                if (!done_filename) {
+                    filename[fileidx++] = buf[i];
+                    if (buf[i] == 0)
+                        done_filename = TRUE;
+                } else {
+                    mode[modeidx++] = buf[i];
+                    if (buf[i] == 0) {
+                        done_mode = TRUE;
+                        if (i != bytes-1) {
+                            error("hmm\n"); //////////REMOVE
+                        }
+                    }
+                }
+            }
+
+            if (!done_filename || !done_mode) {
+                // TODO handle error
+                error("feilfeil\n");
+                break;
+            }
+
+            printf("  %s\n  %s\n", filename, mode);
+
+
+
+        } else if (opcode == PKT_WRQ) {
+            // Not implemented
+        } else if (opcode == PKT_DATA) {
+            // Not implemented
+        } else if (opcode == PKT_ACK) {
+
+        } else if (opcode == PKT_ERROR) {
+
+        } else {
+            //TODO handle this case
+        }
+    }
+
+    /* Remove client from queue */
+    pthread_mutex_lock(&clients_mutex);
+    struct client_info *c = clients;
+    if (clients->id == ci->id) {
+        clients = clients->next;
+    } else {
+        for (; c->next != NULL; c = c->next) {
+            if (c->next->id == ci->id)
+                c->next = ci->next;
+        }
+    }
+
+    num_clients--;
+    pthread_mutex_unlock(&clients_mutex);
+
+    close(ci->sock);
+    free(ci);
+
+    printf("Thread %d exited\n", id);
+    pthread_exit(NULL);
 }

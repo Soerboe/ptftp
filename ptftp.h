@@ -3,10 +3,7 @@
 
 #include <stdint.h>
 
-#define TRUE 1
-#define FALSE 0
-
-#define MODE_NETASC "NETASCII"
+#define MODE_NETASCII "NETASCII"
 #define MODE_OCTET "OCTET"
 #define MODE_MAIL "MAIL" // not used
 
@@ -19,13 +16,17 @@ enum {
     PKT_WRQ, // not used (yet)
     PKT_DATA,
     PKT_ACK,
-    PKT_ERROR
+    PKT_ERROR,
+
+    TRUE = 1,
+    FALSE = 0,
+
+    MAX_CLIENTS = 100,
 };
 
 struct pkt_request {
     uint16_t opcode;
-    char *filename;
-    char *mode;
+    char *buf;
 };
 
 struct pkt_data {

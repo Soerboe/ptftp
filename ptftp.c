@@ -20,15 +20,35 @@ int main (int argc, char **argv)
 
     int sockfd = net_init(argv[1]);
 
-    char str[20] = "Yalla";
-    
-    int i;
-    for (i = 0; i < 5; i++) {
-    int stat = send(sockfd, str, 20, 0);
+    char filename[512] = "/bin/foo";
+    char buf[1024];
 
-    if (stat < 0)
-        perror("");
-    }
+    error("ii\n");
+    struct pkt_request *req = (struct pkt_request *) buf;
+    req->opcode = PKT_RRQ;
+    error("jj\n");
+    strcpy(buf+2, filename);
+    error("hh\n");
+    char *mode = buf+2 + strlen(filename) + 1;
+    strcpy(mode, MODE_NETASCII);
+    error("gg\n");
+    int len = sizeof(req->opcode) + strlen(filename) + 1 + strlen(MODE_NETASCII) + 1;
+
+    send(sockfd, buf, len, 0);
+
+
+//     char str[20] = "Yalla";
+// 
+//     int i;
+//     for (i = 0; i < 5; i++) {
+//         int stat;
+//         do {
+//             send(sockfd, str, 20, 0);
+//         } while (stat < 0 && errno == EAGAIN);
+// 
+//         if (stat < 0)
+//             perror("");
+//     }
 
     close(sockfd);
 

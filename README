@@ -1,3 +1,12 @@
 #########################################
 # Pretty Trivial File Transfer Protocol #
 #########################################
+
+A very simple implementation of the TFTP
+built on top of the DCCP transfer protocol.
+It has many flaws and should _not_ be used
+for anything other than testing.
+
+Currently only reading files from the server
+is implemented.
+
