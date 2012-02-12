@@ -7,6 +7,8 @@
 #define ERRNO_LISTEN        -4
 #define ERRNO_CON           -5
 #define ERRNO_IP            -6
+#define ERRNO_NULL          -7
+#define ERRNO_FOPEN         -8
 
 void error (const char *);
 void error_num (int);

@@ -5,8 +5,8 @@ DEBUG =
 CC_ALL = $(CC) $(CFLAGS) $(DEBUG)
 LINKER = -pthread
 
-targets_server = error.o ptftpd.o
-targets_client = error.o ptftp.o
+targets_server = error.o file.o ptftpd.o
+targets_client = error.o file.o ptftp.o
 
 all:
 	server client
@@ -21,12 +21,15 @@ clean:
 	rm -f ptftpd ptftp *.o *.gch *~
 
 # Object files
-ptftpd.o: ptftpd.c ptftp.h
+ptftpd.o: ptftpd.c ptftp.h error.h file.h
 	$(CC_ALL) -c $^
 
-ptftp.o: ptftp.c ptftp.h
+ptftp.o: ptftp.c ptftp.h error.h file.h
 	$(CC_ALL) -c $^
 
 error.o: error.c error.h
+	$(CC_ALL) -c $^
+
+file.o: file.c file.h ptftp.h
 	$(CC_ALL) -c $^
 

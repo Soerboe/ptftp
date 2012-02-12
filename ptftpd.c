@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include "error.h"
+#include "file.h"
 #include "ptftp.h"
 
 #define BACKLOG 5 // max number of pending connections
@@ -42,6 +43,26 @@ void *handle_client(void *);
 
 int main (int argc, char **argv)
 {
+
+    struct file_info fi;
+    strcpy(fi.filename, "ptftp.h");
+    strcpy(fi.mode, MODE_NETASCII);
+    fi.readonly = TRUE;
+
+    file_init(&fi);
+    read_next_block(&fi);
+    printf("--\n%s\n--\n%d\n", fi.last_block, fi.last_numbytes);
+
+    read_next_block(&fi);
+    printf("--\n%s\n--\n%d\n", fi.last_block, fi.last_numbytes);
+
+    file_close(&fi);
+
+
+    return 0;
+
+
+
     signal(SIGINT, destroy);
     
     if (init() < 0)
@@ -173,6 +194,7 @@ void handle()
         ci->id = id;
         ci->sock = infd;
         memcpy(&(ci->addr), &client_addr, sizeof(client_addr));
+
         if (pthread_create(&(ci->thread), NULL, handle_client, (void *) id)) {
             error(strerror(errno));
             close(infd);
@@ -191,13 +213,13 @@ void handle()
 
 void *handle_client(void *_id)
 {
-    int BUF_SIZE = 1024;
+    int BUF_SIZE = 1024;// extend if larger data field added
 
     int id = (int) _id, i;
-    struct client_info *ci;
-    char buf[BUF_SIZE]; // extend if larger data field added
-    char filename[512];
-    char mode[16];
+    struct client_info *ci = NULL;
+    struct file_info fi;
+    char buf[BUF_SIZE];
+    char requesting = FALSE;
 
     /* Get client info */
     pthread_mutex_lock(&clients_mutex);
@@ -216,6 +238,7 @@ void *handle_client(void *_id)
         static int de = 1;
 
         if ((bytes = recv(ci->sock, buf, BUF_SIZE, 0)) <= 0) {
+            /* Client shut down */
             if (bytes == 0) {
                 //TODO client shut down
                 error_num(4);
@@ -235,14 +258,20 @@ void *handle_client(void *_id)
             char done_mode = FALSE;
             int fileidx = 0, modeidx = 0;
 
+            if (requesting == TRUE) {
+                //TODO handle this error
+            }
+
+            fi.readonly = TRUE;
+
             /* Extract filename and mode */
             for (i = sizeof(uint16_t); i < bytes; i++) {
                 if (!done_filename) {
-                    filename[fileidx++] = buf[i];
+                    fi.filename[fileidx++] = buf[i];
                     if (buf[i] == 0)
                         done_filename = TRUE;
                 } else {
-                    mode[modeidx++] = buf[i];
+                    fi.mode[modeidx++] = buf[i];
                     if (buf[i] == 0) {
                         done_mode = TRUE;
                         if (i != bytes-1) {
@@ -258,7 +287,9 @@ void *handle_client(void *_id)
                 break;
             }
 
-            printf("  %s\n  %s\n", filename, mode);
+            requesting = TRUE;
+
+            printf("  %s\n  %s\n", fi.filename, fi.mode);
 
 
 
@@ -267,6 +298,11 @@ void *handle_client(void *_id)
         } else if (opcode == PKT_DATA) {
             // Not implemented
         } else if (opcode == PKT_ACK) {
+            /* Discard ACK's when not in request mode */
+            if (requesting == FALSE)
+                continue;
+
+
 
         } else if (opcode == PKT_ERROR) {
 
@@ -291,6 +327,7 @@ void *handle_client(void *_id)
     pthread_mutex_unlock(&clients_mutex);
 
     close(ci->sock);
+    file_close(&fi);
     free(ci);
 
     printf("Thread %d exited\n", id);
