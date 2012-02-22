@@ -39,27 +39,28 @@ int net_init();
 void destroy();
 void handle();
 void *handle_client(void *);
+int send_next_data_block (struct file_info *, char *, int);
 
 
 int main (int argc, char **argv)
 {
-
-    struct file_info fi;
-    strcpy(fi.filename, "ptftp.h");
-    strcpy(fi.mode, MODE_NETASCII);
-    fi.readonly = TRUE;
-
-    file_init(&fi);
-    read_next_block(&fi);
-    printf("--\n%s\n--\n%d\n", fi.last_block, fi.last_numbytes);
-
-    read_next_block(&fi);
-    printf("--\n%s\n--\n%d\n", fi.last_block, fi.last_numbytes);
-
-    file_close(&fi);
-
-
-    return 0;
+// 
+//     struct file_info fi;
+//     strcpy(fi.filename, "ptftp.h");
+//     strcpy(fi.mode, MODE_NETASCII);
+//     fi.readonly = TRUE;
+// 
+//     file_init(&fi);
+//     read_next_block(&fi);
+//     printf("--\n%s\n--\n%d\n", fi.last_block, fi.last_numbytes);
+// 
+//     read_next_block(&fi);
+//     printf("--\n%s\n--\n%d\n", fi.last_block, fi.last_numbytes);
+// 
+//     file_close(&fi);
+// 
+// 
+//     return 0;
 
 
 
@@ -213,12 +214,10 @@ void handle()
 
 void *handle_client(void *_id)
 {
-    int BUF_SIZE = 1024;// extend if larger data field added
-
     int id = (int) _id, i;
     struct client_info *ci = NULL;
     struct file_info fi;
-    char buf[BUF_SIZE];
+    char buf[BUF_SIZE], send_buf[BUF_SIZE];
     char requesting = FALSE;
 
     /* Get client info */
@@ -287,11 +286,15 @@ void *handle_client(void *_id)
                 break;
             }
 
+            printf("REQUEST:\n  %s\n  %s\n", fi.filename, fi.mode);
+
             requesting = TRUE;
 
-            printf("  %s\n  %s\n", fi.filename, fi.mode);
+            if (file_init(&fi) != 0) {
+                error("handle this error\n"); //TODO
+            }
 
-
+            send_next_data_block(&fi, send_buf, ci->sock);
 
         } else if (opcode == PKT_WRQ) {
             // Not implemented
@@ -302,7 +305,15 @@ void *handle_client(void *_id)
             if (requesting == FALSE)
                 continue;
 
+            struct pkt_ack *ack = (struct pkt_ack *) buf;
 
+            /* Ignore wrong ACK's  */
+            if (ack->block == fi.cur_block) {
+                if (fi.last_numbytes < BLOCKSIZE)
+                    break; // end connection when whole file is read
+
+                send_next_data_block(&fi, send_buf, ci->sock);
+            }
 
         } else if (opcode == PKT_ERROR) {
 
@@ -314,6 +325,7 @@ void *handle_client(void *_id)
     /* Remove client from queue */
     pthread_mutex_lock(&clients_mutex);
     struct client_info *c = clients;
+
     if (clients->id == ci->id) {
         clients = clients->next;
     } else {
@@ -332,4 +344,24 @@ void *handle_client(void *_id)
 
     printf("Thread %d exited\n", id);
     pthread_exit(NULL);
+}
+
+int send_next_data_block (struct file_info *fi, char *send_buf, int sockfd) {
+    int i, bytes;
+
+    read_next_block(fi);
+    struct pkt_data *msg = (struct pkt_data *) send_buf;
+    msg->opcode = PKT_DATA;
+    msg->block = fi->cur_block;
+    unsigned char *ptr = &(msg->data);
+
+    for (i = 0; i < fi->last_numbytes; i++) {
+        *(ptr++) = fi->last_block[i];
+    }
+
+    if ((bytes = send(sockfd, send_buf, fi->last_numbytes + 4, 0)) == -1) {
+        error("handle it\n"); //TODO
+    }
+
+    return 0;
 }

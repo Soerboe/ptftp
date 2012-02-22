@@ -9,7 +9,8 @@ targets_server = error.o file.o ptftpd.o
 targets_client = error.o file.o ptftp.o
 
 all:
-	server client
+	make server
+	make client
 
 server: $(targets_server)
 	$(CC_ALL) $^ $(LINKER) -o ptftpd

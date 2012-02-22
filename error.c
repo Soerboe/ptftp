@@ -1,12 +1,14 @@
 #include <stdio.h>
 #include "error.h"
 
-char *errors[] = {                                      // error number
+char *errors[] = {                                      // error_num
     "No DCCP support",                                  // 0
     "No server given",                                  // 1
     "Could not bind to socket",                         // 2
     "Wrong argument count",                             // 3
-    "Connection closed by client",                      // 4
+    "Connection closed by peer",                        // 4
+    "Unsupported function",                             // 5
+    "Could not create local file",                      // 6
 };
 
 

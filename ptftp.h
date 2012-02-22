@@ -22,6 +22,7 @@ enum {
     FALSE = 0,
 
     MAX_CLIENTS = 100,
+    BUF_SIZE = 1024,
 };
 
 struct pkt_request {
