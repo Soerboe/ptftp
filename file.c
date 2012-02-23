@@ -60,9 +60,13 @@ int read_next_block (struct file_info *fi)
 int write_block (struct file_info *fi, char *buf, int length)
 {
     fi->cur_block++;
-    strcpy(fi->last_block, buf);
+    memcpy(fi->last_block, buf, length);
 
     fi->last_numbytes = fwrite(fi->last_block, 1, length, fi->fd);
+
+    if (fi->last_numbytes != length) {
+        fprintf(stderr, "ERROR EROOR\n");
+    }
     return fi->last_numbytes;
 }
 

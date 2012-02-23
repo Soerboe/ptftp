@@ -34,11 +34,12 @@ int num_clients = 0, clients_id = 0;
 pthread_mutex_t clients_mutex;
 
 /* Function definitions */
-int init();
-int net_init();
+int serialize_data(struct pkt_data *, char *);
 void destroy();
+int init();
 void handle();
 void *handle_client(void *);
+int net_init();
 int send_next_data_block (struct file_info *, char *, int);
 
 
@@ -249,7 +250,9 @@ void *handle_client(void *_id)
 
         printf("PKT %d\n", de++);
 
-        uint16_t opcode = (uint16_t) *buf;
+        uint16_t opcode = ntohs(*((uint16_t *) buf));
+
+        printf("opcode: %d\n", opcode);
 
         /* Handle incoming packet */
         if (opcode == PKT_RRQ) {
@@ -264,7 +267,7 @@ void *handle_client(void *_id)
             fi.readonly = TRUE;
 
             /* Extract filename and mode */
-            for (i = sizeof(uint16_t); i < bytes; i++) {
+            for (i = B2; i < bytes; i++) {
                 if (!done_filename) {
                     fi.filename[fileidx++] = buf[i];
                     if (buf[i] == 0)
@@ -305,10 +308,10 @@ void *handle_client(void *_id)
             if (requesting == FALSE)
                 continue;
 
-            struct pkt_ack *ack = (struct pkt_ack *) buf;
+            uint32_t block = ntohs(*((uint32_t *) (buf + B2)));
 
             /* Ignore wrong ACK's  */
-            if (ack->block == fi.cur_block) {
+            if (block == fi.cur_block) {
                 if (fi.last_numbytes < BLOCKSIZE)
                     break; // end connection when whole file is read
 
@@ -346,22 +349,30 @@ void *handle_client(void *_id)
     pthread_exit(NULL);
 }
 
-int send_next_data_block (struct file_info *fi, char *send_buf, int sockfd) {
+
+/* Assumes buf is large enough to hold the whole data packet
+ * Returns length of serialized string */
+int send_next_data_block (struct file_info *fi, char *buf, int sockfd) {
     int i, bytes;
 
     read_next_block(fi);
-    struct pkt_data *msg = (struct pkt_data *) send_buf;
-    msg->opcode = PKT_DATA;
-    msg->block = fi->cur_block;
-    unsigned char *ptr = &(msg->data);
+
+    /* Serialize data packet */
+    uint16_t *opcode = (uint16_t *) buf;
+    *opcode = htons(PKT_DATA);
+    uint32_t *block = (uint32_t *) (buf + B2);
+    *block = htons(fi->cur_block);
+    char *data = buf + B2 + B4;
 
     for (i = 0; i < fi->last_numbytes; i++) {
-        *(ptr++) = fi->last_block[i];
+        *(data++) = fi->last_block[i];
     }
 
-    if ((bytes = send(sockfd, send_buf, fi->last_numbytes + 4, 0)) == -1) {
+    int len = fi->last_numbytes + B2 + B4;
+
+    if ((bytes = send(sockfd, buf, len, 0)) == -1) {
         error("handle it\n"); //TODO
     }
 
-    return 0;
+    return len;
 }

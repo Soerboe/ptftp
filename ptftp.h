@@ -2,6 +2,7 @@
 #define PTFTP_H
 
 #include <stdint.h>
+#include "file.h"
 
 #define MODE_NETASCII "NETASCII"
 #define MODE_OCTET "OCTET"
@@ -23,22 +24,27 @@ enum {
 
     MAX_CLIENTS = 100,
     BUF_SIZE = 1024,
+
+    B1 = 1,
+    B2 = 2,
+    B4 = 4,
 };
 
 struct pkt_request {
     uint16_t opcode;
-    char *buf;
+    char filename[512];
+    char mode[16];
 };
 
 struct pkt_data {
     uint16_t opcode;
-    uint16_t block;
-    uint8_t data;
+    uint32_t block;
+    char data[BLOCKSIZE];
 };
 
 struct pkt_ack {
     uint16_t opcode;
-    uint16_t block;
+    uint32_t block;
 };
 
 struct pkt_error {

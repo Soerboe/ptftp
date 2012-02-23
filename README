@@ -10,3 +10,6 @@ for anything other than testing.
 Currently only reading files from the server
 is implemented.
 
+
+Changes from standard TFTP
+    - uses 4 bytes for # blocks

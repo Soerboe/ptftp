@@ -10,11 +10,43 @@
 #include "file.h"
 #include "ptftp.h"
 
-int net_init(char *);
 int get(int, char *, char *);
+int net_init(char *);
+int serialize_request(struct pkt_request *, char *);
+int serialize_ack(struct pkt_ack *, char *);
+
 
 int main (int argc, char **argv)
 {
+
+//     struct file_info in;
+//     in.readonly = TRUE;
+//     strcpy(in.filename, argv[3]);
+//     strcpy(in.mode, MODE_OCTET);
+// 
+//     struct file_info out;
+//     out.readonly = FALSE;
+//     strcpy(out.filename, argv[4]);
+//     strcpy(out.mode, MODE_OCTET);
+// 
+//     file_init(&in);
+//     file_init(&out);
+// 
+//     int len = read_next_block(&in);
+//     int len2 = write_block(&out, in.last_block, len);
+// 
+//     if (len != len2)
+//         printf("ERRORORORRO\n");
+// 
+//     file_close(&in);
+//     file_close(&out);
+//     return 0;
+
+
+
+
+
+
     int sockfd = -1;
 
     if (argc != 5) {
@@ -35,24 +67,6 @@ int main (int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     
-
-
-
-
-// 
-//     char filename[512] = "/bin/foo";
-//     char buf[1024];
-// 
-//     struct pkt_request *req = (struct pkt_request *) buf;
-//     req->opcode = PKT_RRQ;
-//     strcpy(buf+2, filename);
-//     char *mode = buf+2 + strlen(filename) + 1;
-//     strcpy(mode, MODE_NETASCII);
-//     int len = sizeof(req->opcode) + strlen(filename) + 1 + strlen(MODE_NETASCII) + 1;
-// 
-//     send(sockfd, buf, len, 0);
-
-
 //     char str[20] = "Yalla";
 // 
 //     int i;
@@ -76,6 +90,7 @@ int get(int sockfd, char *remote_file, char *local_file) {
     int len;
     char request[512];
     struct file_info fi;
+    uint8_t successful = FALSE;
 
     /* Create local file */
     strcpy(fi.filename, local_file);
@@ -87,12 +102,11 @@ int get(int sockfd, char *remote_file, char *local_file) {
         return -1;
     }
 
-    struct pkt_request *req = (struct pkt_request *) request;
-    req->opcode = PKT_RRQ;
-    strcpy(request+2, remote_file);
-    char *mode = request+2 + strlen(remote_file) + 1;
-    strcpy(mode, MODE_OCTET);
-    len = strlen(remote_file) + strlen(MODE_OCTET) + 4;
+    struct pkt_request req;
+    req.opcode = PKT_RRQ;
+    strcpy(req.filename, remote_file);
+    strcpy(req.mode, MODE_OCTET); // TODO
+    len = serialize_request(&req, request);
 
     send(sockfd, request, len, 0);
 
@@ -114,18 +128,18 @@ int get(int sockfd, char *remote_file, char *local_file) {
 
         printf("PKT %d\n", de++);
 
-        uint16_t opcode = (uint16_t) *buf;
+        uint16_t opcode = ntohs(*(uint16_t *) buf);
 
         /* Handle incoming packet */
         if (opcode == PKT_DATA) {
-            uint16_t block = (uint16_t) *(buf+2);
-            char *data = buf+4;
+            uint32_t block = ntohs(*(uint32_t *) (buf + B2));
+            char *data = buf + B2 + B4;
 
             printf("block: %d\n", block);
 
             /* Ignore data with wrong block number */
             if (block == fi.cur_block + 1) {
-                write_block(&fi, data, bytes - 4);
+                write_block(&fi, data, bytes - B2 - B4);
             } else {
                 continue;
             }
@@ -136,11 +150,15 @@ int get(int sockfd, char *remote_file, char *local_file) {
             struct pkt_ack ack;
             ack.opcode = PKT_ACK;
             ack.block = block;
-            send(sockfd, (char *) &ack, sizeof(ack), 0);
+            char buf[16];
+            int len = serialize_ack(&ack, buf);
+
+            send(sockfd, buf, len, 0);
 
             if (fi.last_numbytes < BLOCKSIZE) {
                 // transfer finished
-                break;
+                successful = TRUE;
+                break; // TODO not break, wait for timeout
             }
 
         } else if (opcode == PKT_ACK) {
@@ -153,7 +171,35 @@ int get(int sockfd, char *remote_file, char *local_file) {
     }
 
     file_close(&fi);
+    if (!successful)
+        remove(fi.filename);
     return 0;
+}
+
+/* Assumes buf is large enough to hold the whole request 
+ * Returns length of serialized string */
+int serialize_request(struct pkt_request *req, char *buf) {
+    int len;
+
+    uint16_t *opcode = (uint16_t *) buf;
+    *opcode = htons(req->opcode);
+
+    if ((len = sprintf(buf + sizeof(req->opcode), "%s%c%s", req->filename, '\0', req->mode)) < 0) {
+        return len;
+    }
+
+    return len + sizeof(req->opcode) + 1;
+}
+
+/* Assumes buf is large enough to hold the whole request 
+ * Returns length of serialized string */
+int serialize_ack(struct pkt_ack *ack, char *buf) {
+    uint16_t *opcode = (uint16_t *) buf;
+    *opcode = htons(ack->opcode);
+    uint32_t *block = (uint32_t *) (buf + B2);
+    *block = htons(ack->block);
+
+    return B2 + B4;
 }
 
 int net_init(char *ip)
