@@ -11,13 +11,15 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <sys/select.h>
 #include "error.h"
 #include "file.h"
 #include "ptftp.h"
+#include "common.h"
 
 #define BACKLOG 5 // max number of pending connections
 
-int sockfd;
+int pubsock;
 char terminate = 0;
 
 struct client_info {
@@ -40,7 +42,8 @@ int init();
 void handle();
 void *handle_client(void *);
 int net_init();
-int send_next_data_block (struct file_info *, char *, int);
+int send_next_data_block (struct file_info *, char *, int *, int);
+int send_data(int, char *, int);
 
 
 int main (int argc, char **argv)
@@ -112,15 +115,15 @@ int net_init()
 // 
 //     /* Select a socket */
 //     for (ptr = serverinfo; ptr != NULL; ptr = ptr->ai_next) {
-//         if ((sockfd = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol)) == -1) {
+//         if ((pubsock = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol)) == -1) {
 //             perror("socket() : remove this error output");
 //             continue;
 //         }
 // 
-//         setsockopt(sockfd, SOL_DCCP, SO_REUSEADDR, &true, sizeof(int));
+//         setsockopt(oub_sockfd, SOL_DCCP, SO_REUSEADDR, &true, sizeof(int));
 // 
-//         if (bind(sockfd, ptr->ai_addr, ptr->ai_addrlen) == -1) {
-//             close(sockfd);
+//         if (bind(pubsock, ptr->ai_addr, ptr->ai_addrlen) == -1) {
+//             close(pubsock);
 //             perror("bind(): remove error");
 //             continue;
 //         }
@@ -141,32 +144,34 @@ int net_init()
     server_addr.sin_port = htons(PORT_NUMBER);
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    if ((sockfd = socket(PF_INET, SOCK_DCCP, IPPROTO_DCCP)) == -1) {
+    if ((pubsock = socket(PF_INET, SOCK_DCCP, IPPROTO_DCCP)) == -1) {
         error(strerror(errno));
         return ERRNO_SOCK;
     }
 
-    setsockopt(sockfd, SOL_DCCP, SO_REUSEADDR, (const char *) &true, sizeof(true));
+    setsockopt(pubsock, SOL_DCCP, SO_REUSEADDR, (const char *) &true, sizeof(true));
 
-    if (bind(sockfd, (struct sockaddr *) &server_addr, sizeof(server_addr)) == -1) {
+    if (bind(pubsock, (struct sockaddr *) &server_addr, sizeof(server_addr)) == -1) {
         error(strerror(errno));
-        close(sockfd);
+        close(pubsock);
         return ERRNO_BIND;
     }
 
-    if (listen(sockfd, BACKLOG) == -1) {
+    if (listen(pubsock, BACKLOG) == -1) {
         error(strerror(errno));
-        close(sockfd);
+        close(pubsock);
         return ERRNO_LISTEN;
     }
 
-    return sockfd;
+    return pubsock;
 }
 
 void destroy()
 {
+    // TODO wait for all clients
+
     pthread_mutex_destroy(&clients_mutex);
-    close(sockfd);
+    close(pubsock);
     exit(EXIT_SUCCESS);
 }
 
@@ -177,7 +182,7 @@ void handle()
     unsigned int client_addr_len = sizeof(client_addr);
 
     while (TRUE) {
-        if ((infd = accept(sockfd, (struct sockaddr *) &client_addr, &client_addr_len)) == -1) {
+        if ((infd = accept(pubsock, (struct sockaddr *) &client_addr, &client_addr_len)) == -1) {
             error(strerror(errno));
             continue;
         }
@@ -185,11 +190,10 @@ void handle()
         pthread_mutex_lock(&clients_mutex);
         if (num_clients >= MAX_CLIENTS) {
             pthread_mutex_unlock(&clients_mutex);
-            continue;
+            continue; // discard new connection when too many connected clients
         }
 
-        int id = clients_id;
-        clients_id = (clients_id+1) % MAX_CLIENTS;
+        int id = clients_id++;
         pthread_mutex_unlock(&clients_mutex);
 
         struct client_info *ci = calloc(1, sizeof(struct client_info));
@@ -215,11 +219,18 @@ void handle()
 
 void *handle_client(void *_id)
 {
-    int id = (int) _id, i;
+    int id = (int) _id,
+        i,
+        pkt_num = 1,
+        sel_stat,
+        send_buf_len;
     struct client_info *ci = NULL;
     struct file_info fi;
-    char buf[BUF_SIZE], send_buf[BUF_SIZE];
-    char requesting = FALSE;
+    char buf[BUF_SIZE],
+         send_buf[BUF_SIZE],
+         requesting = FALSE;
+    fd_set fileset;
+    struct timeval timeout;
 
     /* Get client info */
     pthread_mutex_lock(&clients_mutex);
@@ -235,7 +246,32 @@ void *handle_client(void *_id)
 
     while (TRUE) {
         int bytes; 
-        static int de = 1;
+
+        /* Set up fileset for select() */
+        FD_ZERO(&fileset);
+        FD_SET(ci->sock, &fileset);
+        timeout.tv_sec = TIMEOUT / 1000;
+        timeout.tv_usec = (TIMEOUT % 1000) * 1000;
+
+        /* Wait for connection */
+        if ((sel_stat = select(ci->sock + 1, &fileset, NULL, NULL, &timeout)) <= 0) {
+            if (sel_stat == 0) { // timeout
+                if (requesting == TRUE) {
+                    if (send_data(ci->sock, send_buf, send_buf_len) == ERRNO_CON) {
+                        error_num(4);
+                        break;
+                    }
+                    printf("jdjdj\n");
+                    continue;
+                } else
+                    break;
+
+            } else { // error
+                printf("closed\n");
+                perror("p");
+                break;
+            }
+        }
 
         if ((bytes = recv(ci->sock, buf, BUF_SIZE, 0)) <= 0) {
             /* Client shut down */
@@ -248,7 +284,7 @@ void *handle_client(void *_id)
             }
         }
 
-        printf("PKT %d\n", de++);
+        printf("PKT %d\n", pkt_num++);
 
         uint16_t opcode = ntohs(*((uint16_t *) buf));
 
@@ -297,7 +333,7 @@ void *handle_client(void *_id)
                 error("handle this error\n"); //TODO
             }
 
-            send_next_data_block(&fi, send_buf, ci->sock);
+            send_next_data_block(&fi, send_buf, &send_buf_len, ci->sock);
 
         } else if (opcode == PKT_WRQ) {
             // Not implemented
@@ -315,7 +351,7 @@ void *handle_client(void *_id)
                 if (fi.last_numbytes < BLOCKSIZE)
                     break; // end connection when whole file is read
 
-                send_next_data_block(&fi, send_buf, ci->sock);
+                send_next_data_block(&fi, send_buf, &send_buf_len, ci->sock);
             }
 
         } else if (opcode == PKT_ERROR) {
@@ -352,7 +388,7 @@ void *handle_client(void *_id)
 
 /* Assumes buf is large enough to hold the whole data packet
  * Returns length of serialized string */
-int send_next_data_block (struct file_info *fi, char *buf, int sockfd) {
+int send_next_data_block (struct file_info *fi, char *buf, int *buf_len, int sockfd) {
     int i, bytes;
 
     read_next_block(fi);
@@ -368,11 +404,23 @@ int send_next_data_block (struct file_info *fi, char *buf, int sockfd) {
         *(data++) = fi->last_block[i];
     }
 
-    int len = fi->last_numbytes + B2 + B4;
+    *buf_len = fi->last_numbytes + B2 + B4;
 
-    if ((bytes = send(sockfd, buf, len, 0)) == -1) {
-        error("handle it\n"); //TODO
+    if ((bytes = dccp_send(sockfd, buf, *buf_len)) == -1) {
+        error("handle it 1\n"); //TODO
     }
 
-    return len;
+    return *buf_len;
 }
+
+int send_data(int sockfd, char *buf, int len) {
+    int bytes;
+
+    if ((bytes = dccp_send(sockfd, buf, len)) == -1) {
+        error("handle it 2\n"); //TODO
+        return ERRNO_CON;
+    }
+
+    return 0;
+}
+

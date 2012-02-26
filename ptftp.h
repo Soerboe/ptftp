@@ -12,6 +12,9 @@
 #define SOL_DCCP 269
 #define PORT_NUMBER 1069 // use 1069 insted of 69 when testing
 
+/* Connection timeout (given in ms) */
+#define TIMEOUT 2000
+
 enum {
     PKT_RRQ = 1,
     PKT_WRQ, // not used (yet)

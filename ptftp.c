@@ -9,9 +9,11 @@
 #include "error.h"
 #include "file.h"
 #include "ptftp.h"
+#include "common.h"
 
 int get(int, char *, char *);
 int net_init(char *);
+int send_ack(int, int);
 int serialize_request(struct pkt_request *, char *);
 int serialize_ack(struct pkt_ack *, char *);
 
@@ -87,7 +89,8 @@ int main (int argc, char **argv)
 }
 
 int get(int sockfd, char *remote_file, char *local_file) {
-    int len;
+    int len,
+        pkt_num = 1;
     char request[512];
     struct file_info fi;
     uint8_t successful = FALSE;
@@ -108,12 +111,11 @@ int get(int sockfd, char *remote_file, char *local_file) {
     strcpy(req.mode, MODE_OCTET); // TODO
     len = serialize_request(&req, request);
 
-    send(sockfd, request, len, 0);
+    dccp_send(sockfd, request, len);
 
     while (TRUE) {
         int bytes;
         char buf[BUF_SIZE];
-        static int de = 1;
 
         if ((bytes = recv(sockfd, buf, BUF_SIZE, 0)) <= 0) {
             /* Client shut down */
@@ -126,7 +128,7 @@ int get(int sockfd, char *remote_file, char *local_file) {
             }
         }
 
-        printf("PKT %d\n", de++);
+        printf("PKT %d\n", pkt_num++);
 
         uint16_t opcode = ntohs(*(uint16_t *) buf);
 
@@ -140,6 +142,9 @@ int get(int sockfd, char *remote_file, char *local_file) {
             /* Ignore data with wrong block number */
             if (block == fi.cur_block + 1) {
                 write_block(&fi, data, bytes - B2 - B4);
+            } else if (block <= fi.cur_block) { // resend ack for lost packet
+                send_ack(sockfd, block);
+                continue;
             } else {
                 continue;
             }
@@ -147,13 +152,8 @@ int get(int sockfd, char *remote_file, char *local_file) {
             printf("last_bytes: %d\n", fi.last_numbytes);
 
             /* Send ACK */
-            struct pkt_ack ack;
-            ack.opcode = PKT_ACK;
-            ack.block = block;
-            char buf[16];
-            int len = serialize_ack(&ack, buf);
-
-            send(sockfd, buf, len, 0);
+    if (pkt_num != 2 && pkt_num != 3 && pkt_num != 4) // DEBUG REMOVE
+            send_ack(sockfd, block); 
 
             if (fi.last_numbytes < BLOCKSIZE) {
                 // transfer finished
@@ -174,6 +174,16 @@ int get(int sockfd, char *remote_file, char *local_file) {
     if (!successful)
         remove(fi.filename);
     return 0;
+}
+
+int send_ack(int sockfd, int block) {
+    struct pkt_ack ack;
+    ack.opcode = PKT_ACK;
+    ack.block = block;
+    char buf[16];
+    int len = serialize_ack(&ack, buf);
+    dccp_send(sockfd, buf, len);
+    return 0; // TODO fix return value
 }
 
 /* Assumes buf is large enough to hold the whole request 

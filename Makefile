@@ -5,8 +5,8 @@ DEBUG =
 CC_ALL = $(CC) $(CFLAGS) $(DEBUG)
 LINKER = -pthread
 
-targets_server = error.o file.o ptftpd.o
-targets_client = error.o file.o ptftp.o
+targets_server = error.o file.o common.o ptftpd.o
+targets_client = error.o file.o common.o ptftp.o
 
 all:
 	make server
@@ -32,5 +32,8 @@ error.o: error.c error.h
 	$(CC_ALL) -c $^
 
 file.o: file.c file.h ptftp.h
+	$(CC_ALL) -c $^
+
+common.o: common.c common.h
 	$(CC_ALL) -c $^
 
