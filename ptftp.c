@@ -35,7 +35,7 @@ int main (int argc, char **argv)
 //     file_init(&out);
 // 
 //     int len = read_next_block(&in);
-//     int len2 = write_block(&out, in.last_block, len);
+//     int len2 = append_block(&out, in.last_block, len);
 // 
 //     if (len != len2)
 //         printf("ERRORORORRO\n");
@@ -141,7 +141,7 @@ int get(int sockfd, char *remote_file, char *local_file) {
 
             /* Ignore data with wrong block number */
             if (block == fi.cur_block + 1) {
-                write_block(&fi, data, bytes - B2 - B4);
+                append_block(&fi, data, bytes - B2 - B4);
             } else if (block <= fi.cur_block) { // resend ack for lost packet
                 send_ack(sockfd, block);
                 continue;

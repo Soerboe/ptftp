@@ -261,14 +261,13 @@ void *handle_client(void *_id)
                         error_num(4);
                         break;
                     }
-                    printf("jdjdj\n");
+
                     continue;
                 } else
                     break;
 
             } else { // error
-                printf("closed\n");
-                perror("p");
+                perror("unexpected error");
                 break;
             }
         }
@@ -276,7 +275,6 @@ void *handle_client(void *_id)
         if ((bytes = recv(ci->sock, buf, BUF_SIZE, 0)) <= 0) {
             /* Client shut down */
             if (bytes == 0) {
-                //TODO client shut down
                 error_num(4);
                 break;
             } else  {
@@ -297,7 +295,7 @@ void *handle_client(void *_id)
             int fileidx = 0, modeidx = 0;
 
             if (requesting == TRUE) {
-                //TODO handle this error
+                continue; //discard RRQ when already in transfer mode
             }
 
             fi.readonly = TRUE;

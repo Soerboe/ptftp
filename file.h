@@ -18,6 +18,6 @@ struct file_info {
 int file_init (struct file_info *);
 int file_close (struct file_info *);
 int read_next_block (struct file_info *);
-int write_block (struct file_info *, char *, int);
+int append_block (struct file_info *, char *, int);
 
 #endif

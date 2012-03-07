@@ -57,7 +57,7 @@ int read_next_block (struct file_info *fi)
     return fi->last_numbytes;
 }
 
-int write_block (struct file_info *fi, char *buf, int length)
+int append_block (struct file_info *fi, char *buf, int length)
 {
     fi->cur_block++;
     memcpy(fi->last_block, buf, length);
